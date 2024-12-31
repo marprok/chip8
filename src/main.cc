@@ -36,8 +36,8 @@ int main(int argc, char** argv)
     std::array<std::uint8_t, MAX_ADDR> RAM {};
     std::array<std::uint8_t, 0x10>     V {};
     std::array<std::uint16_t, 0x10>    STACK {};
-    std::uint8_t                       I {}, delay {}, sound {}, SP {};
-    std::uint16_t                      PC {};
+    std::uint8_t                       delay {}, sound {}, SP {};
+    std::uint16_t                      PC {}, I {};
 
     const std::uint16_t program_base = 0x200;
     const std::uint16_t program_end  = read_program("../1-chip8-logo.ch8", RAM, program_base) - 1;
@@ -53,9 +53,9 @@ int main(int argc, char** argv)
 
     while (PC <= program_end)
     {
-        // 0000 0000
-        const std::uint8_t opcode = RAM[PC] >> 4;
-        switch (opcode)
+        // instructions are stored in big endian order in RAM
+        const std::uint16_t operation = (static_cast<std::uint16_t>(RAM[PC]) << 8) | RAM[PC + 1];
+        switch (RAM[PC] >> 4)
         {
         case 0x0:
         {
@@ -81,12 +81,12 @@ int main(int argc, char** argv)
         }
         case 0xA:
         {
-            TODO("Set I = nnn");
+            I = operation & 0x0FFF;
             break;
         }
         case 0x6:
         {
-            TODO("Set Vx = kk");
+            V[(operation >> 8) & 0x0F] = operation & 0xFF;
             break;
         }
         case 0xD:
