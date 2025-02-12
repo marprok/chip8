@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.23)
 
 project(chip8_emu)
-
+find_package(SDL2 REQUIRED CONFIG REQUIRED COMPONENTS SDL2)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -19,4 +19,4 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/main.cc
 )
 
-target_link_libraries(${PROJECT_NAME})
+target_link_libraries(${PROJECT_NAME} PRIVATE SDL2::SDL2)
