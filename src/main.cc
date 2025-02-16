@@ -62,14 +62,14 @@ struct Display
         return true;
     }
 
-    inline int set_pixels(std::int32_t x, std::int32_t y, std::uint8_t sprite_row)
+    inline bool set_pixels(std::int32_t x, std::int32_t y, std::uint8_t sprite_row)
     {
-        int ret = 0;
+        bool ret = false;
         for (std::uint8_t i = 0; i < 8u && (x + i) < W; ++i)
         {
             m_memory[y * W * 4 + (x + i) * 4 + 2] = m_memory[y * W * 4 + (x + i) * 4 + 1] = m_memory[y * W * 4 + (x + i) * 4] ^= ((sprite_row >> (7 - i)) & 0x1) * 255;
-
-            ret = !m_memory[y * W * 4 + (x + i) * 4];
+            // collision happened?
+            ret |= !m_memory[y * W * 4 + (x + i) * 4];
         }
 
         return ret;
@@ -145,7 +145,7 @@ int run()
     std::uint16_t PC {}, I {};
 
     const std::uint16_t program_base = 0x200;
-    const std::uint16_t program_end  = read_program("../1-chip8-logo.ch8", RAM, program_base) - 1;
+    const std::uint16_t program_end  = read_program("../chip8-test-suite/bin/2-ibm-logo.ch8", RAM, program_base) - 1;
     if (program_end == 0)
     {
         std::cerr << "Could not read the program file\n";
@@ -196,7 +196,7 @@ int run()
             const std::uint8_t n = operation & 0x0F; // sprite height
             for (std::uint8_t i = 0; i < n && (y + i) < HEIGHT; ++i)
             {
-                // check if out of bounds?
+                // TODO: check if out of bounds?
                 std::uint8_t sprite_row = RAM[I + i];
                 if (display.set_pixels(x, y + i, sprite_row))
                     V[0xF] = 1;
@@ -207,6 +207,11 @@ int run()
         case 0x1:
         {
             PC = operation & 0x0FFF;
+            break;
+        }
+        case 0x7: // add kk
+        {
+            V[(operation >> 8) & 0x0F] += operation & 0xFF;
             break;
         }
         default:
