@@ -62,15 +62,20 @@ struct Display
         return true;
     }
 
-    void set_pixels(std::int32_t x, std::int32_t y, std::uint8_t sprite_row)
+    inline int set_pixels(std::int32_t x, std::int32_t y, std::uint8_t sprite_row)
     {
+        int ret = 0;
         for (std::uint8_t i = 0; i < 8u && (x + i) < W; ++i)
         {
             m_memory[y * W * 4 + (x + i) * 4 + 2] = m_memory[y * W * 4 + (x + i) * 4 + 1] = m_memory[y * W * 4 + (x + i) * 4] ^= ((sprite_row >> (7 - i)) & 0x1) * 255;
+
+            ret = !m_memory[y * W * 4 + (x + i) * 4];
         }
+
+        return ret;
     }
 
-    void draw()
+    inline void draw()
     {
         SDL_Texture* tex = SDL_CreateTextureFromSurface(m_rend, m_surf);
         if (tex == NULL)
@@ -92,7 +97,7 @@ struct Display
 
     inline void reset(std::uint8_t value)
     {
-        for (std::int32_t i = 0; i < W * H; i += 4)
+        for (std::int32_t i = 0; i < W * H * 4; i += 4)
         {
             m_memory[i] = m_memory[i + 1] = m_memory[i + 2] = value;
             m_memory[i + 3]                                 = 0xFF;
@@ -135,8 +140,7 @@ int run()
 
     std::array<std::uint8_t, MAX_ADDR> RAM {};
     std::array<std::uint8_t, 0x10>     V {};
-    //    std::array<std::uint16_t, 0x10>    STACK {};
-    // consider making the rgb to point on a single byte?
+    // std::array<std::uint16_t, 0x10>    STACK {};
     // std::uint8_t  delay {}, sound {}, SP {};
     std::uint16_t PC {}, I {};
 
@@ -151,17 +155,16 @@ int run()
     std::cout << "Total: " << std::dec << program_end - program_base + 1 << " bytes" << std::endl;
 
     PC = program_base;
-
     while (PC <= program_end)
     {
-        bool inc_pc = true;
-        // instructions are stored in big endian order in RAM
+        //  instructions are stored in big endian order in RAM
         const std::uint16_t operation = (static_cast<std::uint16_t>(RAM[PC]) << 8) | RAM[PC + 1];
-        switch (RAM[PC] >> 4)
+        PC += 2;
+        switch (operation >> 12)
         {
         case 0x0:
         {
-            switch (RAM[PC + 1])
+            switch (operation & 0xFF)
             {
             case 0xE0: // clear
             {
@@ -172,13 +175,6 @@ int run()
                 TODO("Return from a subroutine");
                 break;
             default:
-                std::cout << std::noshowbase << std::hex << std::setfill('0') << std::setw(4)
-                          << PC << ": "
-                          << std::setw(2)
-                          << (std::uint16_t)RAM[PC]
-                          << " " << std::setw(2)
-                          << (std::uint16_t)RAM[PC + 1]
-                          << std::endl;
                 break;
             }
             break;
@@ -202,27 +198,19 @@ int run()
             {
                 // check if out of bounds?
                 std::uint8_t sprite_row = RAM[I + i];
-                display.set_pixels(x, y + i, sprite_row);
+                if (display.set_pixels(x, y + i, sprite_row))
+                    V[0xF] = 1;
             }
             display.draw();
-            std::cout << (int)x << " " << (int)y << " " << (int)n << std::endl;
             break;
         }
         case 0x1:
         {
-            PC     = operation & 0x0FFF;
-            inc_pc = false;
+            PC = operation & 0x0FFF;
             break;
         }
         default:
         {
-            std::cout << std::noshowbase << std::hex << std::setfill('0') << std::setw(4)
-                      << PC << ": "
-                      << std::setw(2)
-                      << (std::uint16_t)RAM[PC]
-                      << " " << std::setw(2)
-                      << (std::uint16_t)RAM[PC + 1]
-                      << std::endl;
             break;
         }
         }
@@ -235,7 +223,6 @@ int run()
             case SDL_QUIT:
                 SDL_Log("Quite event detected!");
                 return 0;
-                break;
             case SDL_WINDOWEVENT:
             {
                 if (e.window.event == SDL_WINDOWEVENT_RESIZED || e.window.event == SDL_WINDOWEVENT_RESIZED)
@@ -246,9 +233,6 @@ int run()
                 break;
             }
         }
-        // display.draw();
-        if (inc_pc)
-            PC += 2;
     }
 
     return 0;
@@ -259,10 +243,6 @@ int main(int argc, char** argv)
     static_cast<void>(argc);
     static_cast<void>(argv);
 
-    /*
-     * Initialises the SDL video subsystem (as well as the events subsystem).
-     * Returns 0 on success or a negative error code on failure using SDL_GetError().
-     */
     if (SDL_Init(SDL_INIT_VIDEO) != 0)
     {
         std::cerr << "SDL failed to initialise: " << SDL_GetError() << '\n';
@@ -270,7 +250,6 @@ int main(int argc, char** argv)
     }
 
     int ret = run();
-    /* Shuts down all SDL subsystems */
     SDL_Quit();
     return ret;
 }
