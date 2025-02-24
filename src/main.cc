@@ -67,9 +67,10 @@ struct Display
         bool ret = false;
         for (std::uint8_t i = 0; i < 8u && (x + i) < W; ++i)
         {
+            const std::uint8_t old_value          = m_memory[y * W * 4 + (x + i) * 4];
             m_memory[y * W * 4 + (x + i) * 4 + 2] = m_memory[y * W * 4 + (x + i) * 4 + 1] = m_memory[y * W * 4 + (x + i) * 4] ^= ((sprite_row >> (7 - i)) & 0x1) * 255;
             // collision happened?
-            ret |= !m_memory[y * W * 4 + (x + i) * 4];
+            ret |= !m_memory[y * W * 4 + (x + i) * 4] && old_value;
         }
 
         return ret;
@@ -191,14 +192,13 @@ int run()
         }
         case 0xD:
         {
-            std::uint8_t       x = V[(operation >> 8) & 0x0F] % WIDTH;
-            std::uint8_t       y = V[(operation >> 4) & 0x0F] % HEIGHT;
+            const std::uint8_t x = V[(operation >> 8) & 0x0F] % WIDTH;
+            const std::uint8_t y = V[(operation >> 4) & 0x0F] % HEIGHT;
             const std::uint8_t n = operation & 0x0F; // sprite height
             for (std::uint8_t i = 0; i < n && (y + i) < HEIGHT; ++i)
             {
-                // TODO: check if out of bounds?
-                std::uint8_t sprite_row = RAM[I + i];
-                if (display.set_pixels(x, y + i, sprite_row))
+                // TODO: check if out of RAM bounds?
+                if (display.set_pixels(x, y + i, RAM[I + i]))
                     V[0xF] = 1;
             }
             display.draw();
@@ -209,9 +209,84 @@ int run()
             PC = operation & 0x0FFF;
             break;
         }
-        case 0x7: // add kk
+        case 0x7:
         {
             V[(operation >> 8) & 0x0F] += operation & 0xFF;
+            break;
+        }
+        case 0x3:
+        {
+            PC += (V[(operation >> 8) & 0x0F] == (operation & 0xFF)) * 2;
+            break;
+        }
+        case 0x4:
+        {
+            PC += (V[(operation >> 8) & 0x0F] != (operation & 0xFF)) * 2;
+            break;
+        }
+        case 0x5:
+        {
+            if (!(operation & 0xF))
+            {
+                PC += 2 * (V[(operation >> 8) & 0x0F] == V[(operation >> 4) & 0x0F]);
+            }
+            break;
+        }
+        case 0x8:
+        {
+            switch (operation & 0xF)
+            {
+            case 0x0:
+            {
+                V[(operation >> 8) & 0x0F] = V[(operation >> 4) & 0x0F];
+                break;
+            }
+            case 0x1:
+            {
+                V[(operation >> 8) & 0x0F] |= V[(operation >> 4) & 0x0F];
+                break;
+            }
+            case 0x2:
+            {
+                V[(operation >> 8) & 0x0F] &= V[(operation >> 4) & 0x0F];
+                break;
+            }
+            case 0x3:
+            {
+                V[(operation >> 8) & 0x0F] ^= V[(operation >> 4) & 0x0F];
+                break;
+            }
+            case 0x4:
+            {
+                const std::uint16_t sum    = V[(operation >> 8) & 0x0F] + V[(operation >> 4) & 0x0F];
+                V[0xF]                     = sum > 0xFF;
+                V[(operation >> 8) & 0x0F] = sum & 0xFF;
+                break;
+            }
+            case 0x5:
+            {
+                V[0xF] = V[(operation >> 8) & 0x0F] > V[(operation >> 4) & 0x0F];
+                V[(operation >> 8) & 0x0F] -= V[(operation >> 4) & 0x0F];
+                break;
+            }
+            case 0x6:
+            {
+                V[0xF] = V[(operation >> 8) & 0x0F] & 0x1;
+                V[(operation >> 8) & 0x0F] >>= 1;
+                break;
+            }
+            case 0x7:
+            {
+                V[0xF]                     = V[(operation >> 4) & 0x0F] > V[(operation >> 8) & 0x0F];
+                V[(operation >> 8) & 0x0F] = V[(operation >> 4) & 0x0F] - V[(operation >> 8) & 0x0F];
+                break;
+            }
+            case 0xE:
+            {
+                V[0xF] = V[(operation >> 8) & 0x0F] >> 7;
+                V[(operation >> 8) & 0x0F] <<= 1;
+            }
+            }
             break;
         }
         default:
