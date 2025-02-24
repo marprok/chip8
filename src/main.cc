@@ -133,7 +133,7 @@ inline void TODO(const std::string_view instruction)
     std::cout << "TODO: " << instruction << '\n';
 }
 
-int run()
+int run(std::string_view chip8_img)
 {
     Display display;
     if (!display.init())
@@ -146,7 +146,7 @@ int run()
     std::uint16_t PC {}, I {};
 
     const std::uint16_t program_base = 0x200;
-    const std::uint16_t program_end  = read_program("../chip8-test-suite/bin/2-ibm-logo.ch8", RAM, program_base) - 1;
+    const std::uint16_t program_end  = read_program(chip8_img, RAM, program_base) - 1;
     if (program_end == 0)
     {
         std::cerr << "Could not read the program file\n";
@@ -323,13 +323,19 @@ int main(int argc, char** argv)
     static_cast<void>(argc);
     static_cast<void>(argv);
 
+    if (argc != 2)
+    {
+        std::cerr << "Error: no chip8 image given!\n";
+        return 1;
+    }
+
     if (SDL_Init(SDL_INIT_VIDEO) != 0)
     {
         std::cerr << "SDL failed to initialise: " << SDL_GetError() << '\n';
         return 1;
     }
 
-    int ret = run();
+    int ret = run(argv[1]);
     SDL_Quit();
     return ret;
 }
