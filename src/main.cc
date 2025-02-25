@@ -1,6 +1,7 @@
 #include <SDL2/SDL.h>
 #include <array>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -141,9 +142,9 @@ int run(std::string_view chip8_img)
 
     std::array<std::uint8_t, MAX_ADDR> RAM {};
     std::array<std::uint8_t, 0x10>     V {};
-    // std::array<std::uint16_t, 0x10>    STACK {};
-    // std::uint8_t  delay {}, sound {}, SP {};
-    std::uint16_t PC {}, I {};
+    std::array<std::uint16_t, 0x10>    STACK {};
+    std::uint8_t                       SP {}; //, delay {}, sound {} ;
+    std::uint16_t                      PC {}, I {};
 
     const std::uint16_t program_base = 0x200;
     const std::uint16_t program_end  = read_program(chip8_img, RAM, program_base) - 1;
@@ -170,13 +171,18 @@ int run(std::string_view chip8_img)
             case 0xE0: // clear
             {
                 display.reset(0);
+                break;
             }
-            break;
             case 0xEE:
-                TODO("Return from a subroutine");
+            {
+                // TODO: bounds checking
+                PC = STACK[--SP];
                 break;
+            }
             default:
+            {
                 break;
+            }
             }
             break;
         }
@@ -207,6 +213,13 @@ int run(std::string_view chip8_img)
         case 0x1:
         {
             PC = operation & 0x0FFF;
+            break;
+        }
+        case 0x2:
+        {
+            // TODO: bounds check
+            STACK[SP++] = PC;
+            PC          = operation & 0xFFF;
             break;
         }
         case 0x7:
@@ -285,6 +298,36 @@ int run(std::string_view chip8_img)
             {
                 V[0xF] = V[(operation >> 8) & 0x0F] >> 7;
                 V[(operation >> 8) & 0x0F] <<= 1;
+            }
+            }
+            break;
+        }
+        case 0xF:
+        {
+            switch (operation & 0xFF)
+            {
+            case 0x1E:
+            {
+                I += V[(operation >> 8) & 0x0F];
+                break;
+            }
+            case 0x33:
+            {
+                // TODO: this is ugly
+                RAM[I]     = V[(operation >> 8) & 0x0F] / 100;
+                RAM[I + 1] = (V[(operation >> 8) & 0x0F] % 100) / 10;
+                RAM[I + 2] = V[(operation >> 8) & 0x0F] % 10;
+                break;
+            }
+            case 0x55:
+            {
+                std::memcpy(RAM.data() + I, V.data(), ((operation >> 8) & 0x0F) + 1);
+                break;
+            }
+            case 0x65:
+            {
+                std::memcpy(V.data(), RAM.data() + I, ((operation >> 8) & 0x0F) + 1);
+                break;
             }
             }
             break;
