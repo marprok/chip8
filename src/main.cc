@@ -27,12 +27,12 @@ struct Display
 
     bool init() noexcept
     {
-        m_win = SDL_CreateWindow("CHIP-8",                /* Title of the SDL window */
-                                 SDL_WINDOWPOS_UNDEFINED, /* Position x of the window */
-                                 SDL_WINDOWPOS_UNDEFINED, /* Position y of the window */
-                                 W,                       /* Width of the window in pixels */
-                                 H,                       /* Height of the window in pixels */
-                                 0);                      /* Additional flag(s) */
+        m_win = SDL_CreateWindow("CHIP-8",
+                                 SDL_WINDOWPOS_UNDEFINED,
+                                 SDL_WINDOWPOS_UNDEFINED,
+                                 W * 10,
+                                 H * 10,
+                                 0);
         if (!m_win)
         {
             std::cerr << "SDL window failed to initialise: " << SDL_GetError() << '\n';
@@ -115,7 +115,7 @@ private:
     std::array<std::uint8_t, W * 4 * H> m_memory {};
 };
 
-std::uint16_t read_program(const fs::path& program_file, std::array<std::uint8_t, MAX_ADDR>& RAM, const std::uint16_t base_addr = 0x200)
+std::uint16_t load(const fs::path& program_file, std::array<std::uint8_t, MAX_ADDR>& RAM, const std::uint16_t base_addr = 0x200)
 {
     std::fstream in { program_file, in.binary | in.in };
     if (!in.is_open())
@@ -147,7 +147,7 @@ int run(std::string_view chip8_img)
     std::uint16_t                      PC {}, I {};
 
     const std::uint16_t program_base = 0x200;
-    const std::uint16_t program_end  = read_program(chip8_img, RAM, program_base) - 1;
+    const std::uint16_t program_end  = load(chip8_img, RAM, program_base) - 1;
     if (program_end == 0)
     {
         std::cerr << "Could not read the program file\n";
@@ -161,12 +161,17 @@ int run(std::string_view chip8_img)
     {
         //  instructions are stored in big endian order in RAM
         const std::uint16_t operation = (static_cast<std::uint16_t>(RAM[PC]) << 8) | RAM[PC + 1];
+        const std::uint8_t  n         = operation & 0xF;
+        const std::uint8_t  kk        = operation & 0xFF;
+        const std::uint16_t nnn       = operation & 0xFFF;
+        const std::uint8_t  x         = (operation >> 8) & 0x0F;
+        const std::uint8_t  y         = (operation >> 4) & 0x0F;
         PC += 2;
         switch (operation >> 12)
         {
         case 0x0:
         {
-            switch (operation & 0xFF)
+            switch (kk)
             {
             case 0xE0: // clear
             {
@@ -176,6 +181,11 @@ int run(std::string_view chip8_img)
             case 0xEE:
             {
                 // TODO: bounds checking
+                if (SP == 0)
+                {
+                    std::cerr << "Stack underflow!\n";
+                    return 1;
+                }
                 PC = STACK[--SP];
                 break;
             }
@@ -188,23 +198,26 @@ int run(std::string_view chip8_img)
         }
         case 0xA:
         {
-            I = operation & 0x0FFF;
+            I = nnn;
             break;
         }
         case 0x6:
         {
-            V[(operation >> 8) & 0x0F] = operation & 0xFF;
+            V[x] = kk;
             break;
         }
         case 0xD:
         {
-            const std::uint8_t x = V[(operation >> 8) & 0x0F] % WIDTH;
-            const std::uint8_t y = V[(operation >> 4) & 0x0F] % HEIGHT;
-            const std::uint8_t n = operation & 0x0F; // sprite height
-            for (std::uint8_t i = 0; i < n && (y + i) < HEIGHT; ++i)
+            const std::uint8_t cx = V[x] % WIDTH;
+            const std::uint8_t cy = V[y] % HEIGHT;
+            for (std::uint8_t i = 0; i < n && (cy + i) < HEIGHT; ++i)
             {
-                // TODO: check if out of RAM bounds?
-                if (display.set_pixels(x, y + i, RAM[I + i]))
+                if ((I + i) >= RAM.size())
+                {
+                    std::cerr << "Invalid memory access! " << (I + i) << '\n';
+                    return 1;
+                }
+                if (display.set_pixels(cx, cy + i, RAM[I + i]))
                     V[0xF] = 1;
             }
             display.draw();
@@ -217,106 +230,110 @@ int run(std::string_view chip8_img)
         }
         case 0x2:
         {
-            // TODO: bounds check
+            if ((SP + 1u) == STACK.size())
+            {
+                std::cerr << "Stack overflow!\n";
+                return 1;
+            }
             STACK[SP++] = PC;
-            PC          = operation & 0xFFF;
+            PC          = nnn;
             break;
         }
         case 0x7:
         {
-            V[(operation >> 8) & 0x0F] += operation & 0xFF;
+            V[x] += kk;
             break;
         }
         case 0x3:
         {
-            PC += (V[(operation >> 8) & 0x0F] == (operation & 0xFF)) * 2;
+            PC += (V[x] == kk) * 2;
             break;
         }
         case 0x4:
         {
-            PC += (V[(operation >> 8) & 0x0F] != (operation & 0xFF)) * 2;
+            PC += (V[x] != kk) * 2;
             break;
         }
         case 0x5:
         {
-            if (!(operation & 0xF))
+            if (!n)
             {
-                PC += 2 * (V[(operation >> 8) & 0x0F] == V[(operation >> 4) & 0x0F]);
+                PC += (V[x] == V[y]) * 2;
             }
             break;
         }
         case 0x8:
         {
-            switch (operation & 0xF)
+            switch (n)
             {
             case 0x0:
             {
-                V[(operation >> 8) & 0x0F] = V[(operation >> 4) & 0x0F];
+                V[x] = V[y];
                 break;
             }
             case 0x1:
             {
-                V[(operation >> 8) & 0x0F] |= V[(operation >> 4) & 0x0F];
+                V[x] |= V[y];
                 break;
             }
             case 0x2:
             {
-                V[(operation >> 8) & 0x0F] &= V[(operation >> 4) & 0x0F];
+                V[x] &= V[y];
                 break;
             }
             case 0x3:
             {
-                V[(operation >> 8) & 0x0F] ^= V[(operation >> 4) & 0x0F];
+                V[x] ^= V[y];
                 break;
             }
             case 0x4:
             {
-                const std::uint16_t sum    = V[(operation >> 8) & 0x0F] + V[(operation >> 4) & 0x0F];
-                V[0xF]                     = sum > 0xFF;
-                V[(operation >> 8) & 0x0F] = sum & 0xFF;
+                const std::uint16_t sum = V[x] + V[y];
+                V[0xF]                  = sum > 0xFF;
+                V[x]                    = sum & 0xFF;
                 break;
             }
             case 0x5:
             {
-                V[0xF] = V[(operation >> 8) & 0x0F] > V[(operation >> 4) & 0x0F];
-                V[(operation >> 8) & 0x0F] -= V[(operation >> 4) & 0x0F];
+                V[0xF] = V[x] > V[y];
+                V[x] -= V[y];
                 break;
             }
             case 0x6:
             {
-                V[0xF] = V[(operation >> 8) & 0x0F] & 0x1;
-                V[(operation >> 8) & 0x0F] >>= 1;
+                V[0xF] = V[x] & 0x1;
+                V[x] >>= 1;
                 break;
             }
             case 0x7:
             {
-                V[0xF]                     = V[(operation >> 4) & 0x0F] > V[(operation >> 8) & 0x0F];
-                V[(operation >> 8) & 0x0F] = V[(operation >> 4) & 0x0F] - V[(operation >> 8) & 0x0F];
+                V[0xF] = V[y] > V[x];
+                V[x]   = V[y] - V[x];
                 break;
             }
             case 0xE:
             {
-                V[0xF] = V[(operation >> 8) & 0x0F] >> 7;
-                V[(operation >> 8) & 0x0F] <<= 1;
+                V[0xF] = V[x] >> 7;
+                V[x] <<= 1;
             }
             }
             break;
         }
         case 0xF:
         {
-            switch (operation & 0xFF)
+            switch (kk)
             {
             case 0x1E:
             {
-                I += V[(operation >> 8) & 0x0F];
+                I += V[x];
                 break;
             }
             case 0x33:
             {
                 // TODO: this is ugly
-                RAM[I]     = V[(operation >> 8) & 0x0F] / 100;
-                RAM[I + 1] = (V[(operation >> 8) & 0x0F] % 100) / 10;
-                RAM[I + 2] = V[(operation >> 8) & 0x0F] % 10;
+                RAM[I]     = V[x] / 100;
+                RAM[I + 1] = (V[x] % 100) / 10;
+                RAM[I + 2] = V[x] % 10;
                 break;
             }
             case 0x55:
@@ -363,9 +380,6 @@ int run(std::string_view chip8_img)
 
 int main(int argc, char** argv)
 {
-    static_cast<void>(argc);
-    static_cast<void>(argv);
-
     if (argc != 2)
     {
         std::cerr << "Error: no chip8 image given!\n";
