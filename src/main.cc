@@ -1,11 +1,14 @@
 #include <SDL2/SDL.h>
+#include <SDL2/SDL_audio.h>
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <string_view>
+#include <thread>
 
 namespace fs = std::filesystem;
 
@@ -115,6 +118,51 @@ private:
     std::array<std::uint8_t, W * 4 * H> m_memory {};
 };
 
+template <std::int32_t AMPLITUDE = 28000, std::int32_t SAMPLES_PER_SEC = 44100>
+struct AudioDevice
+{
+    bool init()
+    {
+        auto audio_callback = [](void* userdata, std::uint8_t* stream, std::int32_t len) -> void
+        {
+            std::int16_t*      buffer    = reinterpret_cast<std::int16_t*>(stream);
+            const std::int32_t length    = len / 2; // AUDIO_S16SYS
+            std::int32_t&      sample_nr = *reinterpret_cast<std::int32_t*>(userdata);
+
+            for (std::int32_t i = 0; i < length; i++, sample_nr++)
+            {
+                double time = (double)sample_nr / (double)SAMPLES_PER_SEC;
+                buffer[i]   = (std::int16_t)(AMPLITUDE * std::sin(2.0f * std::numbers::pi * 441.0f * time)); // render 441 HZ sine wave
+            }
+        };
+
+        m_spec.freq     = SAMPLES_PER_SEC; // number of samples per second
+        m_spec.format   = AUDIO_S16SYS;    // sample type (here: signed short i.e. 16 bit)
+        m_spec.channels = 1;               // only one channel
+        m_spec.samples  = 2048;            // buffer-size
+        m_spec.callback = audio_callback;  // function SDL calls periodically to refill the buffer
+        m_spec.userdata = &m_sample_nr;    // counter, keeping track of current sample number
+
+        SDL_AudioSpec have;
+        if (SDL_OpenAudio(&m_spec, &have) != 0)
+        {
+            SDL_LogError(SDL_LOG_CATEGORY_AUDIO, "Failed to open audio: %s", SDL_GetError());
+            return false;
+        }
+        if (m_spec.format != have.format)
+        {
+            SDL_LogError(SDL_LOG_CATEGORY_AUDIO, "Failed to get the desired AudioSpec");
+            return false;
+        }
+
+        return true;
+    }
+
+private:
+    SDL_AudioSpec m_spec {};
+    std::uint32_t m_sample_nr {};
+};
+
 std::uint16_t load(const fs::path& program_file, std::array<std::uint8_t, MAX_ADDR>& RAM, const std::uint16_t base_addr = 0x200)
 {
     std::fstream in { program_file, in.binary | in.in };
@@ -140,10 +188,14 @@ int run(std::string_view chip8_img)
     if (!display.init())
         return 1;
 
+    AudioDevice device;
+    if (!device.init())
+        return 1;
+
     std::array<std::uint8_t, MAX_ADDR> RAM {};
     std::array<std::uint8_t, 0x10>     V {};
     std::array<std::uint16_t, 0x10>    STACK {};
-    std::uint8_t                       SP {}; //, delay {}, sound {} ;
+    std::uint8_t                       SP {}, delay {}, sound {};
     std::uint16_t                      PC {}, I {};
 
     const std::uint16_t program_base = 0x200;
@@ -155,10 +207,16 @@ int run(std::string_view chip8_img)
     }
     std::cout << "Program base: " << std::hex << std::showbase << program_base << ", Program end: " << program_end << std::endl;
     std::cout << "Total: " << std::dec << program_end - program_base + 1 << " bytes" << std::endl;
+    constexpr auto FRAME_DURATION = std::chrono::milliseconds(2);
+    constexpr auto TIMER_TICK     = std::chrono::microseconds(16700);
 
-    PC = program_base;
+    PC                  = program_base;
+    auto sound_accum_mc = std::chrono::microseconds(0);
+    auto delay_accum_mc = std::chrono::microseconds(0);
+
     while (PC <= program_end)
     {
+        const auto start = std::chrono::steady_clock::now();
         //  instructions are stored in big endian order in RAM
         const std::uint16_t operation = (static_cast<std::uint16_t>(RAM[PC]) << 8) | RAM[PC + 1];
         const std::uint8_t  n         = operation & 0xF;
@@ -166,6 +224,7 @@ int run(std::string_view chip8_img)
         const std::uint16_t nnn       = operation & 0xFFF;
         const std::uint8_t  x         = (operation >> 8) & 0x0F;
         const std::uint8_t  y         = (operation >> 4) & 0x0F;
+
         PC += 2;
         switch (operation >> 12)
         {
@@ -175,6 +234,7 @@ int run(std::string_view chip8_img)
             {
             case 0xE0: // clear
             {
+                // std::printf("clear display\n");
                 display.reset(0);
                 break;
             }
@@ -187,10 +247,12 @@ int run(std::string_view chip8_img)
                     return 1;
                 }
                 PC = STACK[--SP];
+                // std::printf("return from subrutine back to %d\n", PC);
                 break;
             }
             default:
             {
+                // std::printf("Unknown operation %04X\n", operation);
                 break;
             }
             }
@@ -199,11 +261,13 @@ int run(std::string_view chip8_img)
         case 0xA:
         {
             I = nnn;
+            // std::printf("I = %04X\n", I);
             break;
         }
         case 0x6:
         {
             V[x] = kk;
+            // std::printf("V[%d] = %02X\n", x, V[x]);
             break;
         }
         case 0xD:
@@ -221,11 +285,13 @@ int run(std::string_view chip8_img)
                     V[0xF] = 1;
             }
             display.draw();
+            // std::printf("Draw sprite %X,%X\n", cx, cy);
             break;
         }
         case 0x1:
         {
             PC = operation & 0x0FFF;
+            // std::printf("PC = %03X\n", PC);
             break;
         }
         case 0x2:
@@ -237,21 +303,25 @@ int run(std::string_view chip8_img)
             }
             STACK[SP++] = PC;
             PC          = nnn;
+            // std::printf("PC = %03X, SP = %d\n", PC, SP);
             break;
         }
         case 0x7:
         {
             V[x] += kk;
+            // std::printf("ADD: V[%d] = %04X\n", x, V[x]);
             break;
         }
         case 0x3:
         {
             PC += (V[x] == kk) * 2;
+            // std::printf("Jump if V[%d] == %02X, %d, PC = %03X\n", x, kk, (V[x] == kk), PC);
             break;
         }
         case 0x4:
         {
             PC += (V[x] != kk) * 2;
+            // std::printf("Jump if V[%d] != %02X, %d, PC = %03X\n", x, kk, (V[x] != kk), PC);
             break;
         }
         case 0x5:
@@ -259,6 +329,7 @@ int run(std::string_view chip8_img)
             if (!n)
             {
                 PC += (V[x] == V[y]) * 2;
+                // std::printf("Jump if %d, PC = %03X\n", (V[x] == V[y]), PC);
             }
             break;
         }
@@ -268,21 +339,25 @@ int run(std::string_view chip8_img)
             {
             case 0x0:
             {
+                // std::printf("V[%d] = V[%d], %04X\n", x, y, V[x]);
                 V[x] = V[y];
                 break;
             }
             case 0x1:
             {
+                // std::printf("V[%d] |= V[%d], %04X %04X\n", x, y, V[x], V[y]);
                 V[x] |= V[y];
                 break;
             }
             case 0x2:
             {
+                // std::printf("V[%d] &= V[%d], %04X %04X\n", x, y, V[x], V[y]);
                 V[x] &= V[y];
                 break;
             }
             case 0x3:
             {
+                // std::printf("V[%d] ^= V[%d], %04X %04X\n", x, y, V[x], V[y]);
                 V[x] ^= V[y];
                 break;
             }
@@ -291,30 +366,66 @@ int run(std::string_view chip8_img)
                 const std::uint16_t sum = V[x] + V[y];
                 V[0xF]                  = sum > 0xFF;
                 V[x]                    = sum & 0xFF;
+                // std::printf("Sum V[15], V[%d], %04X %04X\n", x, V[0xF], V[x]);
                 break;
             }
             case 0x5:
             {
                 V[0xF] = V[x] > V[y];
                 V[x] -= V[y];
+                // std::printf("Sub x - y V[15], V[%d], %04X %04X\n", x, V[0xF], V[x]);
                 break;
             }
             case 0x6:
             {
                 V[0xF] = V[x] & 0x1;
                 V[x] >>= 1;
+                // std::printf("Shift right by 1, V[15], V[%d], %04X %04X\n", x, V[0xF], V[x]);
                 break;
             }
             case 0x7:
             {
                 V[0xF] = V[y] > V[x];
                 V[x]   = V[y] - V[x];
+                // std::printf("Sub y - x V[15], V[%d], %04X %04X\n", x, V[0xF], V[x]);
                 break;
             }
             case 0xE:
             {
                 V[0xF] = V[x] >> 7;
                 V[x] <<= 1;
+                // std::printf("Shift left by 1, V[15], V[%d], %04X %04X\n", x, V[0xF], V[x]);
+                break;
+            }
+            default:
+            {
+                std::printf("operation %04X\n", operation);
+                break;
+            }
+            }
+            break;
+        }
+        case 0xB:
+        {
+            PC = nnn + V[0];
+            // std::printf("PC = %03X + %04X, %d\n", nnn, V[0], PC);
+            break;
+        }
+        case 0xE:
+        {
+            switch (kk)
+            {
+            case 0xA1:
+            {
+                // TODO: implement keyboard
+                PC += 2;
+                // std::printf("TODO: Skip next instruction if key with the value of Vx is not pressed. %d\n", PC);
+                break;
+            }
+            default:
+            {
+                // std::printf("operation %04X\n", operation);
+                break;
             }
             }
             break;
@@ -326,6 +437,7 @@ int run(std::string_view chip8_img)
             case 0x1E:
             {
                 I += V[x];
+                // std::printf("I += V[%d], %04X\n", x, I);
                 break;
             }
             case 0x33:
@@ -334,16 +446,46 @@ int run(std::string_view chip8_img)
                 RAM[I]     = V[x] / 100;
                 RAM[I + 1] = (V[x] % 100) / 10;
                 RAM[I + 2] = V[x] % 10;
+                // std::printf("BCD %d %d %d = %d\n", RAM[I], RAM[I + 1], RAM[I + 2], V[x]);
                 break;
             }
             case 0x55:
             {
                 std::memcpy(RAM.data() + I, V.data(), ((operation >> 8) & 0x0F) + 1);
+                // std::printf("store %d bytes from registers to RAM address %04X\n", (((operation >> 8) & 0x0F) + 1), I);
                 break;
             }
             case 0x65:
             {
                 std::memcpy(V.data(), RAM.data() + I, ((operation >> 8) & 0x0F) + 1);
+                // std::printf("load %d bytes from RAM address %04X to registers\n", (((operation >> 8) & 0x0F) + 1), I);
+                break;
+            }
+            case 0x7:
+            {
+                V[x] = delay;
+                // std::printf("V[%d] = delay, %d\n", x, delay);
+                break;
+            }
+            case 0x15:
+            {
+                delay = V[x];
+                if (delay > 0)
+                    delay_accum_mc = std::chrono::microseconds(0);
+                // std::printf("delay set to %d\n", delay);
+                break;
+            }
+            case 0x18:
+            {
+                sound          = V[x];
+                sound_accum_mc = std::chrono::microseconds(0);
+                SDL_PauseAudio(0); // start playing sound
+                // std::printf("sound = V[%d], %d\n", x, sound);
+                break;
+            }
+            default:
+            {
+                std::printf("operation %04X\n", operation);
                 break;
             }
             }
@@ -351,10 +493,10 @@ int run(std::string_view chip8_img)
         }
         default:
         {
+            std::printf("operation %04X\n", operation);
             break;
         }
         }
-
         SDL_Event e;
         while (SDL_PollEvent(&e))
         {
@@ -373,6 +515,34 @@ int run(std::string_view chip8_img)
                 break;
             }
         }
+        const std::chrono::duration<double, std::milli> diff = std::chrono::steady_clock::now() - start;
+        if (diff < FRAME_DURATION)
+            std::this_thread::sleep_for(FRAME_DURATION - diff);
+        if (sound > 0)
+        {
+            sound_accum_mc += std::chrono::duration_cast<std::chrono::microseconds>(FRAME_DURATION);
+            if (sound_accum_mc >= TIMER_TICK)
+            {
+                sound--;
+                if (sound == 0)
+                {
+                    SDL_PauseAudio(1); // stop playing sound
+                }
+                sound_accum_mc = std::chrono::microseconds(0);
+            }
+        }
+
+        if (delay > 0)
+        {
+            delay_accum_mc += std::chrono::duration_cast<std::chrono::microseconds>(FRAME_DURATION);
+            if (delay_accum_mc >= TIMER_TICK)
+            {
+                // std::printf("delay_accum_mc = %ld, TIMER_TICK = %ld\n", delay_accum_mc.count(), TIMER_TICK.count());
+                delay--;
+                delay_accum_mc = std::chrono::microseconds(0);
+            }
+        }
+        // std::printf("sound %d, delay %d\n", sound, delay);
     }
 
     return 0;
@@ -386,7 +556,7 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    if (SDL_Init(SDL_INIT_VIDEO) != 0)
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) != 0)
     {
         std::cerr << "SDL failed to initialise: " << SDL_GetError() << '\n';
         return 1;
