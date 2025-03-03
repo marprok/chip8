@@ -364,36 +364,42 @@ int run(std::string_view chip8_img)
             case 0x4:
             {
                 const std::uint16_t sum = V[x] + V[y];
-                V[0xF]                  = sum > 0xFF;
                 V[x]                    = sum & 0xFF;
+                V[0xF]                  = sum > 0xFF;
                 // std::printf("Sum V[15], V[%d], %04X %04X\n", x, V[0xF], V[x]);
                 break;
             }
             case 0x5:
             {
-                V[0xF] = V[x] > V[y];
+                const std::uint8_t flag = V[x] >= V[y];
+                // std::printf("flag %d, V[%X] %d, V[%X] %d,  V[F] %d\n", flag, x, V[x], y, V[y], V[0xF]);
                 V[x] -= V[y];
-                // std::printf("Sub x - y V[15], V[%d], %04X %04X\n", x, V[0xF], V[x]);
+                V[0xF] = flag;
+                // std::printf("SuB result %d\n", V[x]);
                 break;
             }
             case 0x6:
             {
-                V[0xF] = V[x] & 0x1;
+                const std::uint8_t flag = V[x] & 0x1;
                 V[x] >>= 1;
+                V[0xF] = flag;
                 // std::printf("Shift right by 1, V[15], V[%d], %04X %04X\n", x, V[0xF], V[x]);
                 break;
             }
             case 0x7:
             {
-                V[0xF] = V[y] > V[x];
+                const std::uint8_t flag = V[y] >= V[x];
+                // std::printf("flag %d, V[%X] %d, V[%X] %d,  V[F] %d\n", flag, x, V[x], y, V[y], V[0xF]);
                 V[x]   = V[y] - V[x];
-                // std::printf("Sub y - x V[15], V[%d], %04X %04X\n", x, V[0xF], V[x]);
+                V[0xF] = flag;
+                // std::printf("SuB result %d\n", V[x]);
                 break;
             }
             case 0xE:
             {
-                V[0xF] = V[x] >> 7;
+                const std::uint8_t flag = V[x] >> 7;
                 V[x] <<= 1;
+                V[0xF] = flag;
                 // std::printf("Shift left by 1, V[15], V[%d], %04X %04X\n", x, V[0xF], V[x]);
                 break;
             }
@@ -403,6 +409,12 @@ int run(std::string_view chip8_img)
                 break;
             }
             }
+            break;
+        }
+        case 0x9:
+        {
+            PC += (V[x] != V[y]) * 2;
+            // printf("V%X != V%X, %d != %d\n", x, y, V[x], V[y];
             break;
         }
         case 0xB:
