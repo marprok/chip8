@@ -73,7 +73,8 @@ struct Display
         {
             const std::uint8_t old_value          = m_memory[y * W * 4 + (x + i) * 4];
             m_memory[y * W * 4 + (x + i) * 4 + 2] = m_memory[y * W * 4 + (x + i) * 4 + 1] = m_memory[y * W * 4 + (x + i) * 4] ^= ((sprite_row >> (7 - i)) & 0x1) * 255;
-            // collision happened?
+            // std::printf("%d %d %d %d\n", m_memory[y * W * 4 + (x + i) * 4], m_memory[y * W * 4 + (x + i) * 4 + 1], m_memory[y * W * 4 + (x + i) * 4 + 2], m_memory[y * W * 4 + (x + i) * 4 + 3]);
+            //  collision happened?
             ret |= !m_memory[y * W * 4 + (x + i) * 4] && old_value;
         }
 
@@ -187,6 +188,8 @@ int run(std::string_view chip8_img)
     Display display;
     if (!display.init())
         return 1;
+    // clear the screen
+    display.reset(0);
 
     AudioDevice device;
     if (!device.init())
@@ -234,7 +237,6 @@ int run(std::string_view chip8_img)
             {
             case 0xE0: // clear
             {
-                // std::printf("clear display\n");
                 display.reset(0);
                 break;
             }
