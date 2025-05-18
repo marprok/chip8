@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <string_view>
 #include <thread>
 
@@ -21,7 +22,6 @@ struct Display
 {
     ~Display()
     {
-        /* Frees memory */
         SDL_FreeSurface(m_surf);
         SDL_DestroyTexture(m_ttex);
         SDL_DestroyRenderer(m_rend);
@@ -73,7 +73,6 @@ struct Display
         {
             const std::uint8_t old_value          = m_memory[y * W * 4 + (x + i) * 4];
             m_memory[y * W * 4 + (x + i) * 4 + 2] = m_memory[y * W * 4 + (x + i) * 4 + 1] = m_memory[y * W * 4 + (x + i) * 4] ^= ((sprite_row >> (7 - i)) & 0x1) * 255;
-            // std::printf("%d %d %d %d\n", m_memory[y * W * 4 + (x + i) * 4], m_memory[y * W * 4 + (x + i) * 4 + 1], m_memory[y * W * 4 + (x + i) * 4 + 2], m_memory[y * W * 4 + (x + i) * 4 + 3]);
             //  collision happened?
             ret |= !m_memory[y * W * 4 + (x + i) * 4] && old_value;
         }
@@ -126,8 +125,8 @@ struct AudioDevice
     {
         auto audio_callback = [](void* userdata, std::uint8_t* stream, std::int32_t len) -> void
         {
-            std::int16_t*      buffer    = reinterpret_cast<std::int16_t*>(stream);
             const std::int32_t length    = len / 2; // AUDIO_S16SYS
+            std::int16_t*      buffer    = reinterpret_cast<std::int16_t*>(stream);
             std::int32_t&      sample_nr = *reinterpret_cast<std::int32_t*>(userdata);
 
             for (std::int32_t i = 0; i < length; i++, sample_nr++)
@@ -183,6 +182,11 @@ inline void TODO(const std::string_view instruction)
     std::cout << "TODO: " << instruction << '\n';
 }
 
+std::map<SDL_Keycode, std::uint8_t> key_mapping { { SDLK_1, 0x1 }, { SDLK_2, 0x2 }, { SDLK_3, 0x3 }, { SDLK_4, 0xC }, \
+                                                  { SDLK_q, 0x4 }, { SDLK_w, 0x5 }, { SDLK_e, 0x6 }, { SDLK_r, 0xD }, \
+                                                  { SDLK_a, 0x7 }, { SDLK_s, 0x8 }, { SDLK_d, 0x9 }, { SDLK_f, 0xE }, \
+                                                  { SDLK_z, 0xA }, { SDLK_x, 0x0 }, { SDLK_c, 0xB }, { SDLK_v, 0xF }};
+
 int run(std::string_view chip8_img)
 {
     Display display;
@@ -198,6 +202,7 @@ int run(std::string_view chip8_img)
     std::array<std::uint8_t, MAX_ADDR> RAM {};
     std::array<std::uint8_t, 0x10>     V {};
     std::array<std::uint16_t, 0x10>    STACK {};
+    std::array<bool, 0x10>             key_pressed {};
     std::uint8_t                       SP {}, delay {}, sound {};
     std::uint16_t                      PC {}, I {};
 
@@ -213,196 +218,312 @@ int run(std::string_view chip8_img)
     constexpr auto FRAME_DURATION = std::chrono::milliseconds(2);
     constexpr auto TIMER_TICK     = std::chrono::microseconds(16700);
 
-    PC                  = program_base;
-    auto sound_accum_mc = std::chrono::microseconds(0);
-    auto delay_accum_mc = std::chrono::microseconds(0);
-
+    PC                          = program_base;
+    auto         sound_accum_mc = std::chrono::microseconds(0);
+    auto         delay_accum_mc = std::chrono::microseconds(0);
+    bool         halt           = false;
+    std::uint8_t v_key          = 0;
     while (PC <= program_end)
     {
         const auto start = std::chrono::steady_clock::now();
-        //  instructions are stored in big endian order in RAM
-        const std::uint16_t operation = (static_cast<std::uint16_t>(RAM[PC]) << 8) | RAM[PC + 1];
-        const std::uint8_t  n         = operation & 0xF;
-        const std::uint8_t  kk        = operation & 0xFF;
-        const std::uint16_t nnn       = operation & 0xFFF;
-        const std::uint8_t  x         = (operation >> 8) & 0x0F;
-        const std::uint8_t  y         = (operation >> 4) & 0x0F;
+        if (!halt)
+        {
+            //  instructions are stored in big endian order in RAM
+            const std::uint16_t operation = (static_cast<std::uint16_t>(RAM[PC]) << 8) | RAM[PC + 1];
+            const std::uint8_t  n         = operation & 0xF;
+            const std::uint8_t  kk        = operation & 0xFF;
+            const std::uint16_t nnn       = operation & 0xFFF;
+            const std::uint8_t  x         = (operation >> 8) & 0x0F;
+            const std::uint8_t  y         = (operation >> 4) & 0x0F;
 
-        PC += 2;
-        switch (operation >> 12)
-        {
-        case 0x0:
-        {
-            switch (kk)
-            {
-            case 0xE0: // clear
-            {
-                display.reset(0);
-                break;
-            }
-            case 0xEE:
-            {
-                // TODO: bounds checking
-                if (SP == 0)
-                {
-                    std::cerr << "Stack underflow!\n";
-                    return 1;
-                }
-                PC = STACK[--SP];
-                // std::printf("return from subrutine back to %d\n", PC);
-                break;
-            }
-            default:
-            {
-                // std::printf("Unknown operation %04X\n", operation);
-                break;
-            }
-            }
-            break;
-        }
-        case 0xA:
-        {
-            I = nnn;
-            // std::printf("I = %04X\n", I);
-            break;
-        }
-        case 0x6:
-        {
-            V[x] = kk;
-            // std::printf("V[%d] = %02X\n", x, V[x]);
-            break;
-        }
-        case 0xD:
-        {
-            const std::uint8_t cx = V[x] % WIDTH;
-            const std::uint8_t cy = V[y] % HEIGHT;
-            for (std::uint8_t i = 0; i < n && (cy + i) < HEIGHT; ++i)
-            {
-                if ((I + i) >= RAM.size())
-                {
-                    std::cerr << "Invalid memory access! " << (I + i) << '\n';
-                    return 1;
-                }
-                if (display.set_pixels(cx, cy + i, RAM[I + i]))
-                    V[0xF] = 1;
-            }
-            display.draw();
-            // std::printf("Draw sprite %X,%X\n", cx, cy);
-            break;
-        }
-        case 0x1:
-        {
-            PC = operation & 0x0FFF;
-            // std::printf("PC = %03X\n", PC);
-            break;
-        }
-        case 0x2:
-        {
-            if ((SP + 1u) == STACK.size())
-            {
-                std::cerr << "Stack overflow!\n";
-                return 1;
-            }
-            STACK[SP++] = PC;
-            PC          = nnn;
-            // std::printf("PC = %03X, SP = %d\n", PC, SP);
-            break;
-        }
-        case 0x7:
-        {
-            V[x] += kk;
-            // std::printf("ADD: V[%d] = %04X\n", x, V[x]);
-            break;
-        }
-        case 0x3:
-        {
-            PC += (V[x] == kk) * 2;
-            // std::printf("Jump if V[%d] == %02X, %d, PC = %03X\n", x, kk, (V[x] == kk), PC);
-            break;
-        }
-        case 0x4:
-        {
-            PC += (V[x] != kk) * 2;
-            // std::printf("Jump if V[%d] != %02X, %d, PC = %03X\n", x, kk, (V[x] != kk), PC);
-            break;
-        }
-        case 0x5:
-        {
-            if (!n)
-            {
-                PC += (V[x] == V[y]) * 2;
-                // std::printf("Jump if %d, PC = %03X\n", (V[x] == V[y]), PC);
-            }
-            break;
-        }
-        case 0x8:
-        {
-            switch (n)
+            PC += 2;
+            switch (operation >> 12)
             {
             case 0x0:
             {
-                // std::printf("V[%d] = V[%d], %04X\n", x, y, V[x]);
-                V[x] = V[y];
+                switch (kk)
+                {
+                case 0xE0: // clear
+                {
+                    display.reset(0);
+                    break;
+                }
+                case 0xEE:
+                {
+                    // TODO: bounds checking
+                    if (SP == 0)
+                    {
+                        std::cerr << "Stack underflow!\n";
+                        return 1;
+                    }
+                    PC = STACK[--SP];
+                    // std::printf("return from subrutine back to %d\n", PC);
+                    break;
+                }
+                default:
+                {
+                    // std::printf("Unknown operation %04X\n", operation);
+                    break;
+                }
+                }
                 break;
             }
-            case 0x1:
+            case 0xA:
             {
-                // std::printf("V[%d] |= V[%d], %04X %04X\n", x, y, V[x], V[y]);
-                V[x] |= V[y];
-                break;
-            }
-            case 0x2:
-            {
-                // std::printf("V[%d] &= V[%d], %04X %04X\n", x, y, V[x], V[y]);
-                V[x] &= V[y];
-                break;
-            }
-            case 0x3:
-            {
-                // std::printf("V[%d] ^= V[%d], %04X %04X\n", x, y, V[x], V[y]);
-                V[x] ^= V[y];
-                break;
-            }
-            case 0x4:
-            {
-                const std::uint16_t sum = V[x] + V[y];
-                V[x]                    = sum & 0xFF;
-                V[0xF]                  = sum > 0xFF;
-                // std::printf("Sum V[15], V[%d], %04X %04X\n", x, V[0xF], V[x]);
-                break;
-            }
-            case 0x5:
-            {
-                const std::uint8_t flag = V[x] >= V[y];
-                // std::printf("flag %d, V[%X] %d, V[%X] %d,  V[F] %d\n", flag, x, V[x], y, V[y], V[0xF]);
-                V[x] -= V[y];
-                V[0xF] = flag;
-                // std::printf("SuB result %d\n", V[x]);
+                I = nnn;
+                // std::printf("I = %04X\n", I);
                 break;
             }
             case 0x6:
             {
-                const std::uint8_t flag = V[x] & 0x1;
-                V[x] >>= 1;
-                V[0xF] = flag;
-                // std::printf("Shift right by 1, V[15], V[%d], %04X %04X\n", x, V[0xF], V[x]);
+                V[x] = kk;
+                // std::printf("V[%d] = %02X\n", x, V[x]);
+                break;
+            }
+            case 0xD:
+            {
+                const std::uint8_t cx = V[x] % WIDTH;
+                const std::uint8_t cy = V[y] % HEIGHT;
+                for (std::uint8_t i = 0; i < n && (cy + i) < HEIGHT; ++i)
+                {
+                    if ((I + i) >= RAM.size())
+                    {
+                        std::cerr << "Invalid memory access! " << (I + i) << '\n';
+                        return 1;
+                    }
+                    if (display.set_pixels(cx, cy + i, RAM[I + i]))
+                        V[0xF] = 1;
+                }
+                display.draw();
+                // std::printf("Draw sprite %X,%X\n", cx, cy);
+                break;
+            }
+            case 0x1:
+            {
+                PC = operation & 0x0FFF;
+                // std::printf("PC = %03X\n", PC);
+                break;
+            }
+            case 0x2:
+            {
+                if ((SP + 1u) == STACK.size())
+                {
+                    std::cerr << "Stack overflow!\n";
+                    return 1;
+                }
+                STACK[SP++] = PC;
+                PC          = nnn;
+                // std::printf("PC = %03X, SP = %d\n", PC, SP);
                 break;
             }
             case 0x7:
             {
-                const std::uint8_t flag = V[y] >= V[x];
-                // std::printf("flag %d, V[%X] %d, V[%X] %d,  V[F] %d\n", flag, x, V[x], y, V[y], V[0xF]);
-                V[x]   = V[y] - V[x];
-                V[0xF] = flag;
-                // std::printf("SuB result %d\n", V[x]);
+                V[x] += kk;
+                // std::printf("ADD: V[%d] = %04X\n", x, V[x]);
+                break;
+            }
+            case 0x3:
+            {
+                PC += (V[x] == kk) * 2;
+                // std::printf("Jump if V[%d] == %02X, %d, PC = %03X\n", x, kk, (V[x] == kk), PC);
+                break;
+            }
+            case 0x4:
+            {
+                PC += (V[x] != kk) * 2;
+                // std::printf("Jump if V[%d] != %02X, %d, PC = %03X\n", x, kk, (V[x] != kk), PC);
+                break;
+            }
+            case 0x5:
+            {
+                if (!n)
+                {
+                    PC += (V[x] == V[y]) * 2;
+                    // std::printf("Jump if %d, PC = %03X\n", (V[x] == V[y]), PC);
+                }
+                break;
+            }
+            case 0x8:
+            {
+                switch (n)
+                {
+                case 0x0:
+                {
+                    // std::printf("V[%d] = V[%d], %04X\n", x, y, V[x]);
+                    V[x] = V[y];
+                    break;
+                }
+                case 0x1:
+                {
+                    // std::printf("V[%d] |= V[%d], %04X %04X\n", x, y, V[x], V[y]);
+                    V[x] |= V[y];
+                    break;
+                }
+                case 0x2:
+                {
+                    // std::printf("V[%d] &= V[%d], %04X %04X\n", x, y, V[x], V[y]);
+                    V[x] &= V[y];
+                    break;
+                }
+                case 0x3:
+                {
+                    // std::printf("V[%d] ^= V[%d], %04X %04X\n", x, y, V[x], V[y]);
+                    V[x] ^= V[y];
+                    break;
+                }
+                case 0x4:
+                {
+                    const std::uint16_t sum = V[x] + V[y];
+                    V[x]                    = sum & 0xFF;
+                    V[0xF]                  = sum > 0xFF;
+                    // std::printf("Sum V[15], V[%d], %04X %04X\n", x, V[0xF], V[x]);
+                    break;
+                }
+                case 0x5:
+                {
+                    const std::uint8_t flag = V[x] >= V[y];
+                    // std::printf("flag %d, V[%X] %d, V[%X] %d,  V[F] %d\n", flag, x, V[x], y, V[y], V[0xF]);
+                    V[x] -= V[y];
+                    V[0xF] = flag;
+                    // std::printf("SuB result %d\n", V[x]);
+                    break;
+                }
+                case 0x6:
+                {
+                    const std::uint8_t flag = V[x] & 0x1;
+                    V[x] >>= 1;
+                    V[0xF] = flag;
+                    // std::printf("Shift right by 1, V[15], V[%d], %04X %04X\n", x, V[0xF], V[x]);
+                    break;
+                }
+                case 0x7:
+                {
+                    const std::uint8_t flag = V[y] >= V[x];
+                    // std::printf("flag %d, V[%X] %d, V[%X] %d,  V[F] %d\n", flag, x, V[x], y, V[y], V[0xF]);
+                    V[x]   = V[y] - V[x];
+                    V[0xF] = flag;
+                    // std::printf("SuB result %d\n", V[x]);
+                    break;
+                }
+                case 0xE:
+                {
+                    const std::uint8_t flag = V[x] >> 7;
+                    V[x] <<= 1;
+                    V[0xF] = flag;
+                    // std::printf("Shift left by 1, V[15], V[%d], %04X %04X\n", x, V[0xF], V[x]);
+                    break;
+                }
+                default:
+                {
+                    std::printf("operation %04X\n", operation);
+                    break;
+                }
+                }
+                break;
+            }
+            case 0x9:
+            {
+                PC += (V[x] != V[y]) * 2;
+                // printf("V%X != V%X, %d != %d\n", x, y, V[x], V[y];
+                break;
+            }
+            case 0xB:
+            {
+                PC = nnn + V[0];
+                // std::printf("PC = %03X + %04X, %d\n", nnn, V[0], PC);
                 break;
             }
             case 0xE:
             {
-                const std::uint8_t flag = V[x] >> 7;
-                V[x] <<= 1;
-                V[0xF] = flag;
-                // std::printf("Shift left by 1, V[15], V[%d], %04X %04X\n", x, V[0xF], V[x]);
+                switch (kk)
+                {
+                case 0xA1:
+                {
+                    // TODO: implement keyboard
+                    PC += (!key_pressed[V[x]]) * 2;
+                    // std::printf("TODO: Skip next instruction if key with the value of Vx is not pressed. %d\n", PC);
+                    break;
+                }
+                case 0x9E:
+                {
+                    PC += (key_pressed[V[x]]) * 2;
+                    break;
+                }
+                default:
+                {
+                    // std::printf("operation %04X\n", operation);
+                    break;
+                }
+                }
+                break;
+            }
+            case 0xF:
+            {
+                switch (kk)
+                {
+                case 0x1E:
+                {
+                    I += V[x];
+                    // std::printf("I += V[%d], %04X\n", x, I);
+                    break;
+                }
+                case 0x33:
+                {
+                    // TODO: this is ugly
+                    RAM[I]     = V[x] / 100;
+                    RAM[I + 1] = (V[x] % 100) / 10;
+                    RAM[I + 2] = V[x] % 10;
+                    // std::printf("BCD %d %d %d = %d\n", RAM[I], RAM[I + 1], RAM[I + 2], V[x]);
+                    break;
+                }
+                case 0x55:
+                {
+                    std::memcpy(RAM.data() + I, V.data(), ((operation >> 8) & 0x0F) + 1);
+                    // std::printf("store %d bytes from registers to RAM address %04X\n", (((operation >> 8) & 0x0F) + 1), I);
+                    break;
+                }
+                case 0x65:
+                {
+                    std::memcpy(V.data(), RAM.data() + I, ((operation >> 8) & 0x0F) + 1);
+                    // std::printf("load %d bytes from RAM address %04X to registers\n", (((operation >> 8) & 0x0F) + 1), I);
+                    break;
+                }
+                case 0x7:
+                {
+                    V[x] = delay;
+                    // std::printf("V[%d] = delay, %d\n", x, delay);
+                    break;
+                }
+                case 0x15:
+                {
+                    delay = V[x];
+                    if (delay > 0)
+                        delay_accum_mc = std::chrono::microseconds(0);
+                    // std::printf("delay set to %d\n", delay);
+                    break;
+                }
+                case 0x18:
+                {
+                    sound          = V[x];
+                    sound_accum_mc = std::chrono::microseconds(0);
+                    SDL_PauseAudio(0); // start playing sound
+                    // std::printf("sound = V[%d], %d\n", x, sound);
+                    break;
+                }
+                case 0xA:
+                {
+                    // TODO: halt until a key is pressed
+                    halt  = true;
+                    v_key = x;
+                    printf("testing\n");
+                    break;
+                }
+                default:
+                {
+                    std::printf("operation %04X\n", operation);
+                    break;
+                }
+                }
                 break;
             }
             default:
@@ -411,105 +532,6 @@ int run(std::string_view chip8_img)
                 break;
             }
             }
-            break;
-        }
-        case 0x9:
-        {
-            PC += (V[x] != V[y]) * 2;
-            // printf("V%X != V%X, %d != %d\n", x, y, V[x], V[y];
-            break;
-        }
-        case 0xB:
-        {
-            PC = nnn + V[0];
-            // std::printf("PC = %03X + %04X, %d\n", nnn, V[0], PC);
-            break;
-        }
-        case 0xE:
-        {
-            switch (kk)
-            {
-            case 0xA1:
-            {
-                // TODO: implement keyboard
-                PC += 2;
-                // std::printf("TODO: Skip next instruction if key with the value of Vx is not pressed. %d\n", PC);
-                break;
-            }
-            default:
-            {
-                // std::printf("operation %04X\n", operation);
-                break;
-            }
-            }
-            break;
-        }
-        case 0xF:
-        {
-            switch (kk)
-            {
-            case 0x1E:
-            {
-                I += V[x];
-                // std::printf("I += V[%d], %04X\n", x, I);
-                break;
-            }
-            case 0x33:
-            {
-                // TODO: this is ugly
-                RAM[I]     = V[x] / 100;
-                RAM[I + 1] = (V[x] % 100) / 10;
-                RAM[I + 2] = V[x] % 10;
-                // std::printf("BCD %d %d %d = %d\n", RAM[I], RAM[I + 1], RAM[I + 2], V[x]);
-                break;
-            }
-            case 0x55:
-            {
-                std::memcpy(RAM.data() + I, V.data(), ((operation >> 8) & 0x0F) + 1);
-                // std::printf("store %d bytes from registers to RAM address %04X\n", (((operation >> 8) & 0x0F) + 1), I);
-                break;
-            }
-            case 0x65:
-            {
-                std::memcpy(V.data(), RAM.data() + I, ((operation >> 8) & 0x0F) + 1);
-                // std::printf("load %d bytes from RAM address %04X to registers\n", (((operation >> 8) & 0x0F) + 1), I);
-                break;
-            }
-            case 0x7:
-            {
-                V[x] = delay;
-                // std::printf("V[%d] = delay, %d\n", x, delay);
-                break;
-            }
-            case 0x15:
-            {
-                delay = V[x];
-                if (delay > 0)
-                    delay_accum_mc = std::chrono::microseconds(0);
-                // std::printf("delay set to %d\n", delay);
-                break;
-            }
-            case 0x18:
-            {
-                sound          = V[x];
-                sound_accum_mc = std::chrono::microseconds(0);
-                SDL_PauseAudio(0); // start playing sound
-                // std::printf("sound = V[%d], %d\n", x, sound);
-                break;
-            }
-            default:
-            {
-                std::printf("operation %04X\n", operation);
-                break;
-            }
-            }
-            break;
-        }
-        default:
-        {
-            std::printf("operation %04X\n", operation);
-            break;
-        }
         }
         SDL_Event e;
         while (SDL_PollEvent(&e))
@@ -523,6 +545,20 @@ int run(std::string_view chip8_img)
             {
                 if (e.window.event == SDL_WINDOWEVENT_RESIZED || e.window.event == SDL_WINDOWEVENT_RESIZED)
                     display.draw();
+                break;
+            }
+            case SDL_KEYDOWN:
+            case SDL_KEYUP:
+            {
+                if (auto key_code = key_mapping.find(e.key.keysym.sym); key_code != key_mapping.end())
+                {
+                    key_pressed[key_code->second] = (e.type == SDL_KEYDOWN);
+                    if (halt)
+                    {
+                        V[v_key] = key_code->second;
+                        halt     = false;
+                    }
+                }
                 break;
             }
             default:
