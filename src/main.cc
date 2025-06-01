@@ -326,10 +326,7 @@ int run(std::string_view chip8_img)
             }
             case 0x5:
             {
-                if (!n)
-                {
-                    PC += (V[x] == V[y]) * 2;
-                }
+                PC += (V[x] == V[y]) * 2;
                 break;
             }
             case 0x8:
@@ -344,16 +341,19 @@ int run(std::string_view chip8_img)
                 case 0x1:
                 {
                     V[x] |= V[y];
+                    V[0xF] = 0;
                     break;
                 }
                 case 0x2:
                 {
                     V[x] &= V[y];
+                    V[0xF] = 0;
                     break;
                 }
                 case 0x3:
                 {
                     V[x] ^= V[y];
+                    V[0xF] = 0;
                     break;
                 }
                 case 0x4:
@@ -372,6 +372,7 @@ int run(std::string_view chip8_img)
                 }
                 case 0x6:
                 {
+                    V[x]                    = V[y];
                     const std::uint8_t flag = V[x] & 0x1;
                     V[x] >>= 1;
                     V[0xF] = flag;
@@ -386,6 +387,7 @@ int run(std::string_view chip8_img)
                 }
                 case 0xE:
                 {
+                    V[x]                    = V[y];
                     const std::uint8_t flag = V[x] >> 7;
                     V[x] <<= 1;
                     V[0xF] = flag;
@@ -451,11 +453,13 @@ int run(std::string_view chip8_img)
                 case 0x55:
                 {
                     std::memcpy(RAM.data() + I, V.data(), ((operation >> 8) & 0x0F) + 1);
+                    I += ((operation >> 8) & 0x0F) + 1;
                     break;
                 }
                 case 0x65:
                 {
                     std::memcpy(V.data(), RAM.data() + I, ((operation >> 8) & 0x0F) + 1);
+                    I += ((operation >> 8) & 0x0F) + 1;
                     break;
                 }
                 case 0x7:
@@ -465,9 +469,8 @@ int run(std::string_view chip8_img)
                 }
                 case 0x15:
                 {
-                    delay = V[x];
-                    if (delay > 0)
-                        delay_accum_mc = std::chrono::microseconds(0);
+                    delay          = V[x];
+                    delay_accum_mc = std::chrono::microseconds(0);
                     break;
                 }
                 case 0x18:
