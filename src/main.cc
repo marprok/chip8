@@ -222,7 +222,7 @@ int run(std::string_view chip8_img)
     auto         sound_accum_mc = std::chrono::microseconds(0);
     auto         delay_accum_mc = std::chrono::microseconds(0);
     bool         halt           = false;
-    std::uint8_t v_key          = 0;
+    std::uint8_t v_key          = 0; // indicate the id of the register in which to store the first key that is pressed and then released on a frame-by-frame basis
     while (PC <= program_end)
     {
         const auto start = std::chrono::steady_clock::now();
@@ -243,26 +243,24 @@ int run(std::string_view chip8_img)
             {
                 switch (kk)
                 {
-                case 0xE0: // clear
+                case 0xE0:
                 {
                     display.reset(0);
                     break;
                 }
                 case 0xEE:
                 {
-                    // TODO: bounds checking
                     if (SP == 0)
                     {
                         std::cerr << "Stack underflow!\n";
                         return 1;
                     }
                     PC = STACK[--SP];
-                    // std::printf("return from subrutine back to %d\n", PC);
                     break;
                 }
                 default:
                 {
-                    // std::printf("Unknown operation %04X\n", operation);
+                    std::printf("operation %04X\n", operation);
                     break;
                 }
                 }
@@ -271,13 +269,11 @@ int run(std::string_view chip8_img)
             case 0xA:
             {
                 I = nnn;
-                // std::printf("I = %04X\n", I);
                 break;
             }
             case 0x6:
             {
                 V[x] = kk;
-                // std::printf("V[%d] = %02X\n", x, V[x]);
                 break;
             }
             case 0xD:
@@ -295,13 +291,11 @@ int run(std::string_view chip8_img)
                         V[0xF] = 1;
                 }
                 display.draw();
-                // std::printf("Draw sprite %X,%X\n", cx, cy);
                 break;
             }
             case 0x1:
             {
                 PC = operation & 0x0FFF;
-                // std::printf("PC = %03X\n", PC);
                 break;
             }
             case 0x2:
@@ -313,25 +307,21 @@ int run(std::string_view chip8_img)
                 }
                 STACK[SP++] = PC;
                 PC          = nnn;
-                // std::printf("PC = %03X, SP = %d\n", PC, SP);
                 break;
             }
             case 0x7:
             {
                 V[x] += kk;
-                // std::printf("ADD: V[%d] = %04X\n", x, V[x]);
                 break;
             }
             case 0x3:
             {
                 PC += (V[x] == kk) * 2;
-                // std::printf("Jump if V[%d] == %02X, %d, PC = %03X\n", x, kk, (V[x] == kk), PC);
                 break;
             }
             case 0x4:
             {
                 PC += (V[x] != kk) * 2;
-                // std::printf("Jump if V[%d] != %02X, %d, PC = %03X\n", x, kk, (V[x] != kk), PC);
                 break;
             }
             case 0x5:
@@ -339,7 +329,6 @@ int run(std::string_view chip8_img)
                 if (!n)
                 {
                     PC += (V[x] == V[y]) * 2;
-                    // std::printf("Jump if %d, PC = %03X\n", (V[x] == V[y]), PC);
                 }
                 break;
             }
@@ -349,25 +338,21 @@ int run(std::string_view chip8_img)
                 {
                 case 0x0:
                 {
-                    // std::printf("V[%d] = V[%d], %04X\n", x, y, V[x]);
                     V[x] = V[y];
                     break;
                 }
                 case 0x1:
                 {
-                    // std::printf("V[%d] |= V[%d], %04X %04X\n", x, y, V[x], V[y]);
                     V[x] |= V[y];
                     break;
                 }
                 case 0x2:
                 {
-                    // std::printf("V[%d] &= V[%d], %04X %04X\n", x, y, V[x], V[y]);
                     V[x] &= V[y];
                     break;
                 }
                 case 0x3:
                 {
-                    // std::printf("V[%d] ^= V[%d], %04X %04X\n", x, y, V[x], V[y]);
                     V[x] ^= V[y];
                     break;
                 }
@@ -376,16 +361,13 @@ int run(std::string_view chip8_img)
                     const std::uint16_t sum = V[x] + V[y];
                     V[x]                    = sum & 0xFF;
                     V[0xF]                  = sum > 0xFF;
-                    // std::printf("Sum V[15], V[%d], %04X %04X\n", x, V[0xF], V[x]);
                     break;
                 }
                 case 0x5:
                 {
                     const std::uint8_t flag = V[x] >= V[y];
-                    // std::printf("flag %d, V[%X] %d, V[%X] %d,  V[F] %d\n", flag, x, V[x], y, V[y], V[0xF]);
                     V[x] -= V[y];
                     V[0xF] = flag;
-                    // std::printf("SuB result %d\n", V[x]);
                     break;
                 }
                 case 0x6:
@@ -393,16 +375,13 @@ int run(std::string_view chip8_img)
                     const std::uint8_t flag = V[x] & 0x1;
                     V[x] >>= 1;
                     V[0xF] = flag;
-                    // std::printf("Shift right by 1, V[15], V[%d], %04X %04X\n", x, V[0xF], V[x]);
                     break;
                 }
                 case 0x7:
                 {
                     const std::uint8_t flag = V[y] >= V[x];
-                    // std::printf("flag %d, V[%X] %d, V[%X] %d,  V[F] %d\n", flag, x, V[x], y, V[y], V[0xF]);
-                    V[x]   = V[y] - V[x];
-                    V[0xF] = flag;
-                    // std::printf("SuB result %d\n", V[x]);
+                    V[x]                    = V[y] - V[x];
+                    V[0xF]                  = flag;
                     break;
                 }
                 case 0xE:
@@ -410,7 +389,6 @@ int run(std::string_view chip8_img)
                     const std::uint8_t flag = V[x] >> 7;
                     V[x] <<= 1;
                     V[0xF] = flag;
-                    // std::printf("Shift left by 1, V[15], V[%d], %04X %04X\n", x, V[0xF], V[x]);
                     break;
                 }
                 default:
@@ -424,13 +402,11 @@ int run(std::string_view chip8_img)
             case 0x9:
             {
                 PC += (V[x] != V[y]) * 2;
-                // printf("V%X != V%X, %d != %d\n", x, y, V[x], V[y];
                 break;
             }
             case 0xB:
             {
                 PC = nnn + V[0];
-                // std::printf("PC = %03X + %04X, %d\n", nnn, V[0], PC);
                 break;
             }
             case 0xE:
@@ -439,9 +415,7 @@ int run(std::string_view chip8_img)
                 {
                 case 0xA1:
                 {
-                    // TODO: implement keyboard
                     PC += (!key_pressed[V[x]]) * 2;
-                    // std::printf("TODO: Skip next instruction if key with the value of Vx is not pressed. %d\n", PC);
                     break;
                 }
                 case 0x9E:
@@ -451,7 +425,7 @@ int run(std::string_view chip8_img)
                 }
                 default:
                 {
-                    // std::printf("operation %04X\n", operation);
+                    std::printf("operation %04X\n", operation);
                     break;
                 }
                 }
@@ -464,7 +438,6 @@ int run(std::string_view chip8_img)
                 case 0x1E:
                 {
                     I += V[x];
-                    // std::printf("I += V[%d], %04X\n", x, I);
                     break;
                 }
                 case 0x33:
@@ -473,25 +446,21 @@ int run(std::string_view chip8_img)
                     RAM[I]     = V[x] / 100;
                     RAM[I + 1] = (V[x] % 100) / 10;
                     RAM[I + 2] = V[x] % 10;
-                    // std::printf("BCD %d %d %d = %d\n", RAM[I], RAM[I + 1], RAM[I + 2], V[x]);
                     break;
                 }
                 case 0x55:
                 {
                     std::memcpy(RAM.data() + I, V.data(), ((operation >> 8) & 0x0F) + 1);
-                    // std::printf("store %d bytes from registers to RAM address %04X\n", (((operation >> 8) & 0x0F) + 1), I);
                     break;
                 }
                 case 0x65:
                 {
                     std::memcpy(V.data(), RAM.data() + I, ((operation >> 8) & 0x0F) + 1);
-                    // std::printf("load %d bytes from RAM address %04X to registers\n", (((operation >> 8) & 0x0F) + 1), I);
                     break;
                 }
                 case 0x7:
                 {
                     V[x] = delay;
-                    // std::printf("V[%d] = delay, %d\n", x, delay);
                     break;
                 }
                 case 0x15:
@@ -499,7 +468,6 @@ int run(std::string_view chip8_img)
                     delay = V[x];
                     if (delay > 0)
                         delay_accum_mc = std::chrono::microseconds(0);
-                    // std::printf("delay set to %d\n", delay);
                     break;
                 }
                 case 0x18:
@@ -507,15 +475,14 @@ int run(std::string_view chip8_img)
                     sound          = V[x];
                     sound_accum_mc = std::chrono::microseconds(0);
                     SDL_PauseAudio(0); // start playing sound
-                    // std::printf("sound = V[%d], %d\n", x, sound);
                     break;
                 }
                 case 0xA:
                 {
-                    // TODO: halt until a key is pressed
                     halt  = true;
                     v_key = x;
-                    printf("testing\n");
+                    for (auto& pressed : key_pressed)
+                        pressed = false;
                     break;
                 }
                 default:
@@ -552,12 +519,14 @@ int run(std::string_view chip8_img)
             {
                 if (auto key_code = key_mapping.find(e.key.keysym.sym); key_code != key_mapping.end())
                 {
-                    key_pressed[key_code->second] = (e.type == SDL_KEYDOWN);
-                    if (halt)
+                    const bool new_state = (e.type == SDL_KEYDOWN);
+                    if (halt && key_pressed[key_code->second] && !new_state)
                     {
                         V[v_key] = key_code->second;
                         halt     = false;
+                        v_key    = 0;
                     }
+                    key_pressed[key_code->second] = new_state;
                 }
                 break;
             }
@@ -576,7 +545,7 @@ int run(std::string_view chip8_img)
                 sound--;
                 if (sound == 0)
                 {
-                    SDL_PauseAudio(1); // stop playing sound
+                    SDL_PauseAudio(1);
                 }
                 sound_accum_mc = std::chrono::microseconds(0);
             }
@@ -587,12 +556,10 @@ int run(std::string_view chip8_img)
             delay_accum_mc += std::chrono::duration_cast<std::chrono::microseconds>(FRAME_DURATION);
             if (delay_accum_mc >= TIMER_TICK)
             {
-                // std::printf("delay_accum_mc = %ld, TIMER_TICK = %ld\n", delay_accum_mc.count(), TIMER_TICK.count());
                 delay--;
                 delay_accum_mc = std::chrono::microseconds(0);
             }
         }
-        // std::printf("sound %d, delay %d\n", sound, delay);
     }
 
     return 0;
