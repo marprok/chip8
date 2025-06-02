@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <random>
 #include <string_view>
 #include <thread>
 
@@ -199,6 +200,8 @@ int run(std::string_view chip8_img)
     if (!device.init())
         return 1;
 
+    std::random_device                 rd("default");
+    std::uniform_int_distribution      uid(0, 255);
     std::array<std::uint8_t, MAX_ADDR> RAM {};
     std::array<std::uint8_t, 0x10>     V {};
     std::array<std::uint16_t, 0x10>    STACK {};
@@ -266,34 +269,6 @@ int run(std::string_view chip8_img)
                 }
                 break;
             }
-            case 0xA:
-            {
-                I = nnn;
-                break;
-            }
-            case 0x6:
-            {
-                V[x] = kk;
-                break;
-            }
-            case 0xD:
-            {
-                V[0xF]                = 0;
-                const std::uint8_t cx = V[x] % WIDTH;
-                const std::uint8_t cy = V[y] % HEIGHT;
-                for (std::uint8_t i = 0; i < n && (cy + i) < HEIGHT; ++i)
-                {
-                    if ((I + i) >= RAM.size())
-                    {
-                        std::cerr << "Invalid memory access! " << (I + i) << '\n';
-                        return 1;
-                    }
-                    if (display.set_pixels(cx, cy + i, RAM[I + i]))
-                        V[0xF] = 1;
-                }
-                display.draw();
-                break;
-            }
             case 0x1:
             {
                 PC = operation & 0x0FFF;
@@ -310,11 +285,6 @@ int run(std::string_view chip8_img)
                 PC          = nnn;
                 break;
             }
-            case 0x7:
-            {
-                V[x] += kk;
-                break;
-            }
             case 0x3:
             {
                 PC += (V[x] == kk) * 2;
@@ -328,6 +298,16 @@ int run(std::string_view chip8_img)
             case 0x5:
             {
                 PC += (V[x] == V[y]) * 2;
+                break;
+            }
+            case 0x6:
+            {
+                V[x] = kk;
+                break;
+            }
+            case 0x7:
+            {
+                V[x] += kk;
                 break;
             }
             case 0x8:
@@ -407,9 +387,37 @@ int run(std::string_view chip8_img)
                 PC += (V[x] != V[y]) * 2;
                 break;
             }
+            case 0xA:
+            {
+                I = nnn;
+                break;
+            }
             case 0xB:
             {
                 PC = nnn + V[0];
+                break;
+            }
+            case 0xC:
+            {
+                V[x] = uid(rd) & kk;
+                break;
+            }
+            case 0xD:
+            {
+                V[0xF]                = 0;
+                const std::uint8_t cx = V[x] % WIDTH;
+                const std::uint8_t cy = V[y] % HEIGHT;
+                for (std::uint8_t i = 0; i < n && (cy + i) < HEIGHT; ++i)
+                {
+                    if ((I + i) >= RAM.size())
+                    {
+                        std::cerr << "Invalid memory access! " << (I + i) << '\n';
+                        return 1;
+                    }
+                    if (display.set_pixels(cx, cy + i, RAM[I + i]))
+                        V[0xF] = 1;
+                }
+                display.draw();
                 break;
             }
             case 0xE:
@@ -438,11 +446,40 @@ int run(std::string_view chip8_img)
             {
                 switch (kk)
                 {
+                case 0x7:
+                {
+                    V[x] = delay;
+                    break;
+                }
+                case 0xA:
+                {
+                    halt  = true;
+                    v_key = x;
+                    for (auto& pressed : key_pressed)
+                        pressed = false;
+                    break;
+                }
+                case 0x15:
+                {
+                    delay          = V[x];
+                    delay_accum_mc = std::chrono::microseconds(0);
+                    break;
+                }
+                case 0x18:
+                {
+                    sound          = V[x];
+                    sound_accum_mc = std::chrono::microseconds(0);
+                    // start playing sound if we have a positive value in the sound reginster
+                    if (sound > 0)
+                        SDL_PauseAudio(0);
+                    break;
+                }
                 case 0x1E:
                 {
                     I += V[x];
                     break;
                 }
+                // Fx29 - LD F, Vx TODO
                 case 0x33:
                 {
                     // TODO: this is ugly
@@ -461,32 +498,6 @@ int run(std::string_view chip8_img)
                 {
                     std::memcpy(V.data(), RAM.data() + I, ((operation >> 8) & 0x0F) + 1);
                     I += ((operation >> 8) & 0x0F) + 1;
-                    break;
-                }
-                case 0x7:
-                {
-                    V[x] = delay;
-                    break;
-                }
-                case 0x15:
-                {
-                    delay          = V[x];
-                    delay_accum_mc = std::chrono::microseconds(0);
-                    break;
-                }
-                case 0x18:
-                {
-                    sound          = V[x];
-                    sound_accum_mc = std::chrono::microseconds(0);
-                    SDL_PauseAudio(0); // start playing sound
-                    break;
-                }
-                case 0xA:
-                {
-                    halt  = true;
-                    v_key = x;
-                    for (auto& pressed : key_pressed)
-                        pressed = false;
                     break;
                 }
                 default:
