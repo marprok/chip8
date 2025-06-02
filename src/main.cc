@@ -278,6 +278,7 @@ int run(std::string_view chip8_img)
             }
             case 0xD:
             {
+                V[0xF]                = 0;
                 const std::uint8_t cx = V[x] % WIDTH;
                 const std::uint8_t cy = V[y] % HEIGHT;
                 for (std::uint8_t i = 0; i < n && (cy + i) < HEIGHT; ++i)
