@@ -143,7 +143,7 @@ struct AudioDevice
         m_spec.samples  = 2048;            // buffer-size
         m_spec.callback = audio_callback;  // function SDL calls periodically to refill the buffer
         m_spec.userdata = &m_sample_nr;    // counter, keeping track of current sample number
-
+        // TODO: clean up the audio lib
         SDL_AudioSpec have;
         if (SDL_OpenAudio(&m_spec, &have) != 0)
         {
