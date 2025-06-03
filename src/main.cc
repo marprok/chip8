@@ -183,10 +183,34 @@ inline void TODO(const std::string_view instruction)
     std::cout << "TODO: " << instruction << '\n';
 }
 
-std::map<SDL_Keycode, std::uint8_t> key_mapping { { SDLK_1, 0x1 }, { SDLK_2, 0x2 }, { SDLK_3, 0x3 }, { SDLK_4, 0xC }, \
-                                                  { SDLK_q, 0x4 }, { SDLK_w, 0x5 }, { SDLK_e, 0x6 }, { SDLK_r, 0xD }, \
-                                                  { SDLK_a, 0x7 }, { SDLK_s, 0x8 }, { SDLK_d, 0x9 }, { SDLK_f, 0xE }, \
-                                                  { SDLK_z, 0xA }, { SDLK_x, 0x0 }, { SDLK_c, 0xB }, { SDLK_v, 0xF }};
+std::map<SDL_Keycode, std::uint8_t> key_mapping { { SDLK_1, 0x1 }, { SDLK_2, 0x2 }, { SDLK_3, 0x3 }, { SDLK_4, 0xC },\
+                                                  { SDLK_q, 0x4 }, { SDLK_w, 0x5 }, { SDLK_e, 0x6 }, { SDLK_r, 0xD },\
+                                                  { SDLK_a, 0x7 }, { SDLK_s, 0x8 }, { SDLK_d, 0x9 }, { SDLK_f, 0xE },\
+                                                  { SDLK_z, 0xA }, { SDLK_x, 0x0 }, { SDLK_c, 0xB }, { SDLK_v, 0xF } };
+
+// TODO: This is ugly but I am too tired do something
+inline void load_font(std::array<std::uint8_t, MAX_ADDR>& RAM, const std::uint16_t base_addr = 0x0)
+{
+    const std::array<std::array<const std::uint8_t, 5>, 0x10> hex_sprite_font { { { 0xF0, 0x90, 0x90, 0x90, 0xF0 },     // 0
+                                                                                  { 0x20, 0x60, 0x20, 0x20, 0x70 },     // 1
+                                                                                  { 0xF0, 0x10, 0xF0, 0x80, 0xF0 },     // 2
+                                                                                  { 0xF0, 0x10, 0xF0, 0x10, 0xF0 },     // 3
+                                                                                  { 0x90, 0x90, 0xF0, 0x10, 0x10 },     // 4
+                                                                                  { 0xF0, 0x80, 0xF0, 0x10, 0xF0 },     // 5
+                                                                                  { 0xF0, 0x80, 0xF0, 0x90, 0xF0 },     // 6
+                                                                                  { 0xF0, 0x10, 0x20, 0x40, 0x40 },     // 7
+                                                                                  { 0xF0, 0x90, 0xF0, 0x90, 0xF0 },     // 8
+                                                                                  { 0xF0, 0x90, 0xF0, 0x10, 0xF0 },     // 9
+                                                                                  { 0xF0, 0x90, 0xF0, 0x90, 0x90 },     // A
+                                                                                  { 0xE0, 0x90, 0xE0, 0x90, 0xE0 },     // B
+                                                                                  { 0xF0, 0x80, 0x80, 0x80, 0xF0 },     // C
+                                                                                  { 0xE0, 0x90, 0x90, 0x90, 0xE0 },     // D
+                                                                                  { 0xF0, 0x80, 0xF0, 0x80, 0xF0 },     // E
+                                                                                  { 0xF0, 0x80, 0xF0, 0x80, 0x80 } } }; // F
+
+    // TODO: This should not fail but we should check that the address of the last sprite is within bounds(0x000 - 0x1FF)
+    std::memcpy(RAM.data() + base_addr, hex_sprite_font.data(), hex_sprite_font.size() * 5);
+}
 
 int run(std::string_view chip8_img)
 {
@@ -216,16 +240,18 @@ int run(std::string_view chip8_img)
         std::cerr << "Could not read the program file\n";
         return 1;
     }
+    load_font(RAM);
     std::cout << "Program base: " << std::hex << std::showbase << program_base << ", Program end: " << program_end << std::endl;
     std::cout << "Total: " << std::dec << program_end - program_base + 1 << " bytes" << std::endl;
     constexpr auto FRAME_DURATION = std::chrono::milliseconds(2);
     constexpr auto TIMER_TICK     = std::chrono::microseconds(16700);
 
-    PC                          = program_base;
-    auto         sound_accum_mc = std::chrono::microseconds(0);
-    auto         delay_accum_mc = std::chrono::microseconds(0);
-    bool         halt           = false;
-    std::uint8_t v_key          = 0; // indicate the id of the register in which to store the first key that is pressed and then released on a frame-by-frame basis
+    PC                  = program_base;
+    auto sound_accum_mc = std::chrono::microseconds(0);
+    auto delay_accum_mc = std::chrono::microseconds(0);
+    bool halt           = false;
+    // indicate the id of the register in which to store the first key that is pressed and then released on a frame-by-frame basis
+    std::uint8_t v_key = 0;
     while (PC <= program_end)
     {
         const auto start = std::chrono::steady_clock::now();
@@ -479,7 +505,12 @@ int run(std::string_view chip8_img)
                     I += V[x];
                     break;
                 }
-                // Fx29 - LD F, Vx TODO
+                case 0x29:
+                {
+                    // TODO: take care of the base address
+                    I = V[x] * 5;
+                    break;
+                }
                 case 0x33:
                 {
                     // TODO: this is ugly
