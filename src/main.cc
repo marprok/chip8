@@ -31,6 +31,8 @@ struct Display
 
     bool init() noexcept
     {
+        static_assert(W % 8 == 0);
+        static_assert(H % 8 == 0);
         m_win = SDL_CreateWindow("CHIP-8",
                                  SDL_WINDOWPOS_UNDEFINED,
                                  SDL_WINDOWPOS_UNDEFINED,
@@ -50,12 +52,16 @@ struct Display
             return false;
         }
         // TODO: endianes check
-        m_surf = SDL_CreateRGBSurfaceFrom(m_memory.data(), W, H, 32, 4 * W, 0xFF000000, 0x00FF0000, 0x0000FF00, 0x000000FF);
+        // m_surf = SDL_CreateRGBSurfaceFrom(m_memory.data(), W, H, 32, 4 * W, 0xFF000000, 0x00FF0000, 0x0000FF00, 0x000000FF);
+        m_surf = SDL_CreateRGBSurfaceWithFormatFrom(m_memory.data(), W, H, 1, W / 8, SDL_PIXELFORMAT_INDEX1MSB);
         if (m_surf == NULL)
         {
             std::cerr << "SDL surface cration failed: " << SDL_GetError() << '\n';
             return false;
         }
+
+        SDL_Color colors[] = { { 0, 0, 0, 255 }, { 255, 255, 255, 255 } };
+        SDL_SetPaletteColors(m_surf->format->palette, colors, 0, 2);
 
         m_ttex = SDL_CreateTexture(m_rend, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET, WIDTH, HEIGHT);
         if (m_ttex == NULL)
@@ -67,17 +73,26 @@ struct Display
         return true;
     }
 
-    inline bool set_pixels(std::int32_t x, std::int32_t y, std::uint8_t sprite_row)
+    inline bool set_pixels(const std::size_t cx, const std::size_t cy, std::uint8_t sprite_row)
     {
         bool ret = false;
-        for (std::uint8_t i = 0; i < 8u && (x + i) < W; ++i)
+        for (std::size_t bits_processed  = 0,
+                         bit_id          = cy * W + cx,
+                         bits_to_process = cx + 8 >= W ? W - cx : 8;
+             bit_id < W * H && bits_processed != bits_to_process;)
         {
-            const std::uint8_t old_value          = m_memory[y * W * 4 + (x + i) * 4];
-            m_memory[y * W * 4 + (x + i) * 4 + 2] = m_memory[y * W * 4 + (x + i) * 4 + 1] = m_memory[y * W * 4 + (x + i) * 4] ^= ((sprite_row >> (7 - i)) & 0x1) * 255;
-            //  collision happened?
-            ret |= !m_memory[y * W * 4 + (x + i) * 4] && old_value;
+            const std::size_t  byte_id               = bit_id >> 3;
+            const std::uint8_t overlapping_bits      = 8 - (bit_id & 0x7);
+            const std::size_t  last_bit_id           = bit_id + overlapping_bits;
+            const std::uint8_t overlapping_bits_mask = static_cast<std::uint8_t>((1 << overlapping_bits) - 1);
+            const std::uint8_t bit_mask              = (sprite_row >> (8 - overlapping_bits)) & overlapping_bits_mask;
+            const std::uint8_t old_value             = m_memory[byte_id];
+            m_memory[byte_id]                        = (old_value & ~overlapping_bits_mask) | (bit_mask ^ (old_value & overlapping_bits_mask));
+            ret |= (old_value & m_memory[byte_id]) != old_value;
+            bit_id = last_bit_id;
+            sprite_row <<= overlapping_bits;
+            bits_processed += overlapping_bits;
         }
-
         return ret;
     }
 
@@ -101,12 +116,11 @@ struct Display
         SDL_DestroyTexture(tex);
     }
 
-    inline void reset(std::uint8_t value)
+    inline void reset(bool value)
     {
-        for (std::int32_t i = 0; i < W * H * 4; i += 4)
+        for (std::size_t i = 0; i < m_memory.size(); ++i)
         {
-            m_memory[i] = m_memory[i + 1] = m_memory[i + 2] = value;
-            m_memory[i + 3]                                 = 0xFF;
+            m_memory[i] = 0xFF * value;
         }
     }
 
@@ -116,12 +130,16 @@ private:
     SDL_Surface*  m_surf {};
     SDL_Texture*  m_ttex {}; // target texture
 
-    std::array<std::uint8_t, W * 4 * H> m_memory {};
+    std::array<std::uint8_t, W / 8 * H> m_memory {};
 };
 
 template <std::int32_t AMPLITUDE = 28000, std::int32_t SAMPLES_PER_SEC = 44100>
 struct AudioDevice
 {
+    ~AudioDevice()
+    {
+        SDL_CloseAudio();
+    }
     bool init()
     {
         auto audio_callback = [](void* userdata, std::uint8_t* stream, std::int32_t len) -> void
@@ -143,7 +161,6 @@ struct AudioDevice
         m_spec.samples  = 2048;            // buffer-size
         m_spec.callback = audio_callback;  // function SDL calls periodically to refill the buffer
         m_spec.userdata = &m_sample_nr;    // counter, keeping track of current sample number
-        // TODO: clean up the audio lib
         SDL_AudioSpec have;
         if (SDL_OpenAudio(&m_spec, &have) != 0)
         {
