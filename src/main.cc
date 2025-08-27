@@ -14,13 +14,13 @@
 
 namespace fs = std::filesystem;
 
-static constexpr std::size_t  MAX_ADDR = 0x1000;
-static constexpr std::int32_t WIDTH    = 64;
-static constexpr std::int32_t HEIGHT   = 32;
+static constexpr std::size_t MAX_ADDR = 0x1000;
 
-template <std::int32_t W = 64, std::int32_t H = 32>
+template <std::int32_t width = 64, std::int32_t height = 32>
 struct Display
 {
+    static constexpr std::uint32_t W = width;
+    static constexpr std::uint32_t H = height;
     ~Display()
     {
         SDL_FreeSurface(m_surf);
@@ -51,8 +51,6 @@ struct Display
             std::cerr << "SDL renderer failed to initialise: " << SDL_GetError() << '\n';
             return false;
         }
-        // TODO: endianes check
-        // m_surf = SDL_CreateRGBSurfaceFrom(m_memory.data(), W, H, 32, 4 * W, 0xFF000000, 0x00FF0000, 0x0000FF00, 0x000000FF);
         m_surf = SDL_CreateRGBSurfaceWithFormatFrom(m_memory.data(), W, H, 1, W / 8, SDL_PIXELFORMAT_INDEX1MSB);
         if (m_surf == NULL)
         {
@@ -63,7 +61,7 @@ struct Display
         SDL_Color colors[] = { { 0, 0, 0, 255 }, { 255, 255, 255, 255 } };
         SDL_SetPaletteColors(m_surf->format->palette, colors, 0, 2);
 
-        m_ttex = SDL_CreateTexture(m_rend, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET, WIDTH, HEIGHT);
+        m_ttex = SDL_CreateTexture(m_rend, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET, W, H);
         if (m_ttex == NULL)
         {
             std::cerr << "SDL could not create texturetarget: " << SDL_GetError() << '\n';
@@ -140,6 +138,7 @@ struct AudioDevice
     {
         SDL_CloseAudio();
     }
+
     bool init()
     {
         auto audio_callback = [](void* userdata, std::uint8_t* stream, std::int32_t len) -> void
@@ -448,9 +447,9 @@ int run(std::string_view chip8_img)
             case 0xD:
             {
                 V[0xF]                = 0;
-                const std::uint8_t cx = V[x] % WIDTH;
-                const std::uint8_t cy = V[y] % HEIGHT;
-                for (std::uint8_t i = 0; i < n && (cy + i) < HEIGHT; ++i)
+                const std::uint8_t cx = V[x] % display.W;
+                const std::uint8_t cy = V[y] % display.H;
+                for (std::uint8_t i = 0; i < n && (cy + i) < display.H; ++i)
                 {
                     if ((I + i) >= RAM.size())
                     {
